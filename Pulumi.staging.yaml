@@ -1,3 +1,6 @@
 config:
   aws:region: ca-central-1
   diese-infra:env: staging
+  main_db_resource_name: diesedb
+  main_db_name: diese_db
+  main_db_username: diese_admin
