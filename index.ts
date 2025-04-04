@@ -3,6 +3,7 @@ import createIAMResources from "./iam/index";
 import createCertificates from "./certificates/index";
 import createContainerRegistry from "./container-registry/index";
 import createDatabases from "./databases/index";
+import { createEcsCluster } from "./webapp/index";
 let config = new pulumi.Config();
 let env = config.require("env");
 
@@ -17,3 +18,10 @@ const containerRegistry = createContainerRegistry(env);
 
 // Create databases
 const databases = createDatabases(env);
+
+// Create webapp
+const webapp = createEcsCluster(
+    env, 
+    containerRegistry.repository.repositoryUrl.toString(),
+    databases.dbSecret
+);

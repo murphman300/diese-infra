@@ -123,7 +123,7 @@ export function createDatabase(env: string) {
             Name: `${dbName}-secret`,
             Environment: env,
             ManagedBy: "pulumi"
-        }
+        },
     });
 
     // Generate a random password for the database
@@ -132,15 +132,6 @@ export function createDatabase(env: string) {
         excludeCharacters: "\"@/\\'",
         includeSpace: false,
     }).then(result => result.randomPassword);
-
-    const dbSecretVersion = new aws.secretsmanager.SecretVersion(`${dbName}-secret-version`, {
-        secretId: dbSecret.id,
-        secretString: pulumi.jsonStringify({
-            username: dbUsername,
-            password: randomPassword,
-        }),
-    });
-
     // Create parameter group
     const parameterGroup = new aws.rds.ParameterGroup(`${env}-${dbName}-pg`, {
         family: "postgres17",
@@ -192,9 +183,7 @@ export function createDatabase(env: string) {
         maxAllocatedStorage: 100, // Enable storage autoscaling
         dbName: dbName,
         username: dbUsername,
-        password: pulumi.output(dbSecretVersion.secretString).apply(
-            secret => JSON.parse(secret || '{}').password || randomPassword
-        ),
+        password: randomPassword,
         skipFinalSnapshot: env !== "prod", // Only skip final snapshot in non-prod
         finalSnapshotIdentifier: env === "prod" ? `${dbName}-final-snapshot` : undefined,
         vpcSecurityGroupIds: [securityGroup.id],
@@ -217,6 +206,19 @@ export function createDatabase(env: string) {
         }
     });
 
+
+    const dbSecretVersion = new aws.secretsmanager.SecretVersion(`${dbName}-secret-version`, {
+        secretId: dbSecret.id,
+        secretString: pulumi.jsonStringify({
+            DB_USERNAME: dbUsername,
+            DB_PASSWORD: randomPassword,
+            DB_PORT: 5432,
+            DB_HOST: db.endpoint,
+            DB_NAME: dbName
+        }),
+    });
+
+
     return {
         vpc,
         subnet1,
@@ -228,7 +230,10 @@ export function createDatabase(env: string) {
         dbPort: db.port,
         dbName: db.dbName,
         dbUsername: db.username,
-        dbSecretArn: dbSecret.arn // Export the secret ARN for reference
+        dbSecretArn: dbSecret.arn,
+        dbSecretName: dbSecret.name,
+        dbSecretVersionArn: dbSecretVersion.arn, // Export the secret ARN for reference
+        dbSecret: dbSecret
     };
 }
 

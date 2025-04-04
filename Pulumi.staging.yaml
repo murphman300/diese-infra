@@ -4,3 +4,5 @@ config:
   main_db_resource_name: diesedb
   main_db_name: diese_db
   main_db_username: diese_admin
+  authorized_domains:
+    - https://staging.diese.ai
