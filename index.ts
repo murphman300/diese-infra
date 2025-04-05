@@ -20,8 +20,5 @@ const containerRegistry = createContainerRegistry(env);
 const databases = createDatabases(env);
 
 // Create webapp
-const webapp = createEcsCluster(
-    env, 
-    containerRegistry.repository.repositoryUrl.toString(),
-    databases.dbSecret
-);
+
+const webapp = createEcsCluster(env, containerRegistry.repository, databases);

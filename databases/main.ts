@@ -1,8 +1,26 @@
 import * as aws from "@pulumi/aws";
 import * as pulumi from "@pulumi/pulumi";
 
-export function createDatabase(env: string) {
+export type DatabaseResources = {
+    vpc: aws.ec2.Vpc;
+    subnet1: aws.ec2.Subnet;
+    subnet2: aws.ec2.Subnet;
+    subnetGroup: aws.rds.SubnetGroup;
+    securityGroup: aws.ec2.SecurityGroup;
+    db: aws.rds.Instance;
+    dbEndpoint: pulumi.Output<string>;
+    dbPort: pulumi.Output<number>;
+    dbName: string;
+    dbUsername: string;
+    dbSecretArn: pulumi.Output<string>;
+    dbSecretName: pulumi.Output<string>;
+    dbSecretVersionArn: pulumi.Output<string>;
+    dbSecret: aws.secretsmanager.Secret;
+};
+
+export function createDatabase(env: string): DatabaseResources {
     const config = new pulumi.Config();
+    const rotatePassword = config.getBoolean("rotatePassword") || false;
     const dbResourceName = config.require("main_db_resource_name");
     const dbName = `${dbResourceName}`;
     const dbUsername = config.require("main_db_username");
@@ -127,11 +145,46 @@ export function createDatabase(env: string) {
     });
 
     // Generate a random password for the database
-    const randomPassword = aws.secretsmanager.getRandomPassword({
-        passwordLength: 64,
-        excludeCharacters: "\"@/\\'",
-        includeSpace: false,
-    }).then(result => result.randomPassword);
+        // 1. Grab the "current" DB password from Secrets Manager
+    //    (assuming the secret *already* exists in some environment).
+    //    We read the last known secretValue, parse JSON, and
+    //    pick off DB_PASSWORD if it exists.
+    const existingDbPassword = aws.secretsmanager.getSecret({
+        name: dbSecretName,
+    }).then(secretValue => {
+        const version = aws.secretsmanager.getSecretVersion({
+            secretId: secretValue.id,
+        }).then(version => {
+            const parsed = JSON.parse(version.secretString || "{}");
+            return parsed as { DB_PASSWORD: string, DB_USERNAME: string, DB_PORT: number, DB_HOST: string, DB_NAME: string };
+        });
+        return version;
+    }).catch(() => {
+        // Fallback if there is no existing secret or something fails
+        return {DB_PASSWORD: "", DB_USERNAME: "", DB_PORT: 5432, DB_HOST: "", DB_NAME: ""};
+    });
+
+    // 2. Only create a *new* random password if rotatePassword = true
+    const newRandomPassword = pulumi
+        .all([existingDbPassword])
+        .apply(async ([oldPwd]) => {
+            if (!rotatePassword && oldPwd.DB_PASSWORD !== "") {
+                // If rotatePassword == false AND an old password exists,
+                // just keep using that one
+                return oldPwd.DB_PASSWORD;
+            }
+            // Otherwise, generate a new random password
+            const pass = await aws.secretsmanager.getRandomPassword({
+                passwordLength: 64,
+                excludeCharacters: "\"@/\\'",
+                includeSpace: false,
+            });
+            return pass.randomPassword!;
+        });
+
+
+    // Make a new randomPassword here if
+    
     // Create parameter group
     const parameterGroup = new aws.rds.ParameterGroup(`${env}-${dbName}-pg`, {
         family: "postgres17",
@@ -172,10 +225,19 @@ export function createDatabase(env: string) {
     const monitoringRolePolicy = new aws.iam.RolePolicyAttachment(`${env}-${dbName}-monitoring-policy`, {
         role: monitoringRole.name,
         policyArn: "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
-    });
+    }); 
 
+    const dbInstanceIdentifier = `${env}-${dbName}`;
+    // Check that all required fields in existingDbPassword are non-empty
+    const hasValidExistingPassword = pulumi.all([existingDbPassword]).apply(([pwd]) => {
+        return pwd.DB_PASSWORD !== "" && 
+               pwd.DB_USERNAME !== "" && 
+               pwd.DB_PORT !== 0 &&
+               pwd.DB_HOST !== "" &&
+               pwd.DB_NAME !== "";
+    })
     // Create RDS instance with enhanced configuration
-    const db = new aws.rds.Instance(`${env}-${dbName}`, {
+    const db = new aws.rds.Instance(dbInstanceIdentifier, {
         engine: "postgres",
         engineVersion: "17.4",
         instanceClass: "db.t3.micro",
@@ -183,7 +245,7 @@ export function createDatabase(env: string) {
         maxAllocatedStorage: 100, // Enable storage autoscaling
         dbName: dbName,
         username: dbUsername,
-        password: randomPassword,
+        password: newRandomPassword,
         skipFinalSnapshot: env !== "prod", // Only skip final snapshot in non-prod
         finalSnapshotIdentifier: env === "prod" ? `${dbName}-final-snapshot` : undefined,
         vpcSecurityGroupIds: [securityGroup.id],
@@ -211,13 +273,12 @@ export function createDatabase(env: string) {
         secretId: dbSecret.id,
         secretString: pulumi.jsonStringify({
             DB_USERNAME: dbUsername,
-            DB_PASSWORD: randomPassword,
+            DB_PASSWORD: newRandomPassword,
             DB_PORT: 5432,
             DB_HOST: db.endpoint,
             DB_NAME: dbName
         }),
     });
-
 
     return {
         vpc,
@@ -228,8 +289,8 @@ export function createDatabase(env: string) {
         db,
         dbEndpoint: db.endpoint,
         dbPort: db.port,
-        dbName: db.dbName,
-        dbUsername: db.username,
+        dbName,
+        dbUsername,
         dbSecretArn: dbSecret.arn,
         dbSecretName: dbSecret.name,
         dbSecretVersionArn: dbSecretVersion.arn, // Export the secret ARN for reference

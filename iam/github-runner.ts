@@ -26,14 +26,34 @@ export function createGitHubRunnerIAMResources(env: string) {
                 {
                     Effect: "Allow",
                     Action: [
-                        // ECS permissions
+                        // ECS permissions for service management
                         "ecs:DescribeServices",
                         "ecs:DescribeTaskDefinition",
                         "ecs:DescribeTasks",
                         "ecs:ListTasks",
                         "ecs:RegisterTaskDefinition",
                         "ecs:UpdateService",
+                        "ecs:DeleteService",
+                        "ecs:CreateService",
+                        "ecs:ListServices",
+                        // Deployment and rollback specific permissions
+                        "ecs:DeregisterTaskDefinition",
+                        "ecs:DescribeTaskSets",
+                        "ecs:UpdateServicePrimaryTaskSet",
+                        "ecs:CreateTaskSet",
+                        "ecs:DeleteTaskSet",
+                        "ecs:UpdateTaskSet",
+                        "ecs:StopTask",
+                        "ecs:RunTask",
+                        "ecs:StartTask",
+                        // Cluster permissions
+                        "ecs:DescribeClusters",
+                        "ecs:ListClusters",
+                        // IAM permissions needed for task execution
                         "iam:PassRole",
+                        "iam:GetRole",
+                        "iam:ListRoles",
+                        "iam:ListInstanceProfiles",
                         // Full ECR permissions for repository management and image operations
                         "ecr:CreateRepository",
                         "ecr:DeleteRepository",

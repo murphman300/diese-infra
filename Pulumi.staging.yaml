@@ -6,3 +6,11 @@ config:
   main_db_username: diese_admin
   authorized_domains:
     - https://staging.diese.ai
+  ecs_cpu: 256
+  ecs_memory: 512
+  ecs_min_containers: 1
+  ecs_max_containers: 2
+  ecs_cpu_target: 90
+  ecs_memory_target: 90
+  ecs_scale_in_cooldown: 300
+  ecs_scale_out_cooldown: 60

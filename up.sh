@@ -14,5 +14,10 @@ else
     exit 1
 fi
 
+# Check for --rotate-pwd flag
+if [[ "$*" == *"--rotate-pwd"* ]]; then
+    pulumi config set rotatePassword true
+fi
+
 # Run pulumi up on index-staging.ts
 pulumi up --stack staging
