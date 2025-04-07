@@ -5,6 +5,34 @@ import { Output } from "@pulumi/pulumi";
 import { config } from "process";
 import { Repository } from "@pulumi/aws/ecr";
 import { DatabaseResources } from "../databases/main";
+import { CertificateResources } from "../certificates";
+
+export interface EcsClusterResources {
+    cluster: pulumi.Output<aws.ecs.Cluster>;
+    taskDefinition: pulumi.Output<aws.ecs.TaskDefinition>;
+    taskExecutionRole: pulumi.Output<aws.iam.Role>;
+    taskRole: pulumi.Output<aws.iam.Role>;
+    logGroup: pulumi.Output<aws.cloudwatch.LogGroup>;
+    secret: pulumi.Output<aws.secretsmanager.Secret>;
+    secretVersion: pulumi.Output<aws.secretsmanager.SecretVersion>;
+    dbSecret: pulumi.Output<Secret>;
+    autoScalingResources: {
+        service: pulumi.Output<aws.ecs.Service>;
+        scalingTarget: pulumi.Output<aws.appautoscaling.Target>;
+        cpuScaling: pulumi.Output<aws.appautoscaling.Policy>;
+        memoryScaling: pulumi.Output<aws.appautoscaling.Policy>;
+    } | null;
+    ecsSecurityGroup: pulumi.Output<aws.ec2.SecurityGroup>;
+    secretsManagerVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
+    s3VpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
+    ecrApiVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
+    ecrDkrVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
+    cloudwatchLogsVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
+    webappLoadBalancer: pulumi.Output<aws.lb.LoadBalancer>;
+    webappTargetGroup: pulumi.Output<aws.lb.TargetGroup>;
+    webappHttpListener: pulumi.Output<aws.lb.Listener>;
+    webappHttpsListener: pulumi.Output<aws.lb.Listener | undefined>;
+}
 
 // Helper function to log ECR events
 function logEcrEvent(env: string, message: string, data?: any) {
@@ -19,7 +47,12 @@ function logEcrEvent(env: string, message: string, data?: any) {
     console.log(JSON.stringify(logMessage));
 }
 
-export function createEcsCluster(env: string, ecrImageRepository: Repository, dbResources: DatabaseResources) {
+export function createEcsCluster(
+    env: string,
+    ecrImageRepository: Repository,
+    dbResources: DatabaseResources,
+    certificateResources?: CertificateResources
+): EcsClusterResources {
     
     const config = new pulumi.Config();
 
@@ -29,20 +62,113 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
     const ecsMaxContainers = config.requireNumber("ecs_max_containers");
     const ecsCpuTarget = config.requireNumber("ecs_cpu_target");
     const ecsMemoryTarget = config.requireNumber("ecs_memory_target");
+    const webAppPort = config.requireNumber("web_app_port");
     const ecsScaleInCooldown = config.requireNumber("ecs_scale_in_cooldown");
     const ecsScaleOutCooldown = config.requireNumber("ecs_scale_out_cooldown");
-    // Create an ECS cluster for Fargate
-    const cluster = new aws.ecs.Cluster(`diese-cluster-${env}`, {
-        name: `diese-cluster-${env}`,
+
+    // Create a VPC for compute resources
+    const computeVpc = new aws.ec2.Vpc(`diese-compute-vpc-${env}`, {
+        cidrBlock: "10.1.0.0/16", // Different CIDR from DB VPC
+        enableDnsHostnames: true,
+        enableDnsSupport: true,
         tags: {
-            Name: `diese-cluster-${env}`,
-            Environment: env
+            Name: `diese-compute-vpc-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
         }
     });
 
-    // Create a security group for ECS tasks
+    // Create an Internet Gateway for the compute VPC
+    const computeIgw = new aws.ec2.InternetGateway(`diese-compute-igw-${env}`, {
+        vpcId: computeVpc.id,
+        tags: {
+            Name: `diese-compute-igw-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Create public subnets in different AZs
+    const computeSubnet1 = new aws.ec2.Subnet(`diese-compute-subnet-1-${env}`, {
+        vpcId: computeVpc.id,
+        cidrBlock: "10.1.1.0/24",
+        availabilityZone: "ca-central-1a",
+        mapPublicIpOnLaunch: true, // Enable auto-assign public IP
+        tags: {
+            Name: `diese-compute-subnet-1-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    const computeSubnet2 = new aws.ec2.Subnet(`diese-compute-subnet-2-${env}`, {
+        vpcId: computeVpc.id,
+        cidrBlock: "10.1.2.0/24",
+        availabilityZone: "ca-central-1b",
+        mapPublicIpOnLaunch: true, // Enable auto-assign public IP
+        tags: {
+            Name: `diese-compute-subnet-2-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Create route table for public subnets
+    const computeRouteTable = new aws.ec2.RouteTable(`diese-compute-rt-${env}`, {
+        vpcId: computeVpc.id,
+        routes: [
+            {
+                cidrBlock: "0.0.0.0/0",
+                gatewayId: computeIgw.id
+            }
+        ],
+        tags: {
+            Name: `diese-compute-rt-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Associate route table with public subnets
+    const rtAssociation1 = new aws.ec2.RouteTableAssociation(`diese-rt-assoc-1-${env}`, {
+        subnetId: computeSubnet1.id,
+        routeTableId: computeRouteTable.id
+    });
+
+    const rtAssociation2 = new aws.ec2.RouteTableAssociation(`diese-rt-assoc-2-${env}`, {
+        subnetId: computeSubnet2.id,
+        routeTableId: computeRouteTable.id
+    });
+
+    // Create VPC peering connection between compute VPC and DB VPC
+    const vpcPeering = new aws.ec2.VpcPeeringConnection(`diese-vpc-peering-${env}`, {
+        vpcId: computeVpc.id,
+        peerVpcId: dbResources.vpc.id,
+        autoAccept: true,
+        tags: {
+            Name: `diese-vpc-peering-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Add route to DB VPC in compute route table
+    const computeToDbRoute = new aws.ec2.Route(`diese-compute-to-db-route-${env}`, {
+        routeTableId: computeRouteTable.id,
+        destinationCidrBlock: "10.0.0.0/16", // DB VPC CIDR
+        vpcPeeringConnectionId: vpcPeering.id
+    });
+
+    // Add route from DB VPC to compute VPC
+    const dbToComputeRoute = new aws.ec2.Route(`diese-db-to-compute-route-${env}`, {
+        routeTableId: dbResources.vpc.mainRouteTableId,
+        destinationCidrBlock: "10.1.0.0/16", // Compute VPC CIDR
+        vpcPeeringConnectionId: vpcPeering.id
+    });
+
+    // Create security group for ECS tasks in compute VPC
     const ecsSecurityGroup = new aws.ec2.SecurityGroup(`diese-ecs-sg-${env}`, {
-        vpcId: dbResources.vpc.id,
+        vpcId: computeVpc.id,
         description: "Security group for ECS tasks",
         ingress: [
             {
@@ -76,7 +202,7 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
         }
     });
 
-    // Update the database security group to allow access from ECS tasks
+    // Update the database security group to allow access from compute VPC's ECS tasks
     const dbIngressRule = pulumi.all([dbResources.securityGroup.id, ecsSecurityGroup.id]).apply(([dbSecurityGroupId, ecsSecurityGroupId]) => {
         return new aws.ec2.SecurityGroupRule(`diese-db-from-ecs-${env}`, {
             type: "ingress",
@@ -87,7 +213,16 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
             securityGroupId: dbSecurityGroupId,
             description: "Allow PostgreSQL access from ECS tasks"
         });
-    })
+    });
+
+    // Create an ECS cluster for Fargate
+    const cluster = new aws.ecs.Cluster(`diese-cluster-${env}`, {
+        name: `diese-cluster-${env}`,
+        tags: {
+            Name: `diese-cluster-${env}`,
+            Environment: env
+        }
+    });
 
     // Create a task execution role for Fargate - this role is used by ECS itself
     const taskExecutionRole = new aws.iam.Role(`diese-task-execution-role-${env}`, {
@@ -302,12 +437,12 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
                 memoryReservation: ecsMemoryTarget, // 80% of task memory
                 cpu: ecsCpuTarget, // 80% of task CPU
                 portMappings: [{
-                    containerPort: 80,
-                    hostPort: 80,
+                    containerPort: webAppPort,
+                    hostPort: webAppPort,
                     protocol: "tcp"
                 }],
                 healthCheck: {
-                    command: ["CMD-SHELL", "node -e 'fetch(\"http://localhost:80/api/health\").then(r => process.exit(r.ok ? 0 : 1))'"],
+                    command: ["CMD-SHELL", `node -e 'fetch(\"http://localhost:${webAppPort}/api/health\").then(r => process.exit(r.ok ? 0 : 1))'`],
                     interval: 15,
                     timeout: 5,
                     retries: 3,
@@ -324,7 +459,7 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
                     },
                     {
                         name: "PORT",
-                        value: "80"
+                        value: `${webAppPort}`
                     },
                     {
                         name: "AUTHORIZED_DOMAINS",
@@ -400,6 +535,136 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
         });
     });
 
+    // Create ALB Security Group
+    const albSecurityGroup = new aws.ec2.SecurityGroup(`diese-alb-sg-${env}`, {
+        vpcId: computeVpc.id,
+        description: "Security group for ALB",
+        ingress: [
+            {
+                protocol: "tcp",
+                fromPort: 80,
+                toPort: 80,
+                cidrBlocks: ["0.0.0.0/0"],
+                description: "Allow HTTP inbound"
+            },
+            {
+                protocol: "tcp",
+                fromPort: 443,
+                toPort: 443,
+                cidrBlocks: ["0.0.0.0/0"],
+                description: "Allow HTTPS inbound"
+            }
+        ],
+        egress: [
+            {
+                protocol: "-1",
+                fromPort: 0,
+                toPort: 0,
+                cidrBlocks: ["0.0.0.0/0"],
+                description: "Allow all outbound traffic"
+            }
+        ],
+        tags: {
+            Name: `diese-alb-sg-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Allow inbound traffic from ALB to ECS tasks
+    const ecsIngressRule = new aws.ec2.SecurityGroupRule(`diese-ecs-from-alb-${env}`, {
+        type: "ingress",
+        fromPort: webAppPort,
+        toPort: webAppPort,
+        protocol: "tcp",
+        sourceSecurityGroupId: albSecurityGroup.id,
+        securityGroupId: ecsSecurityGroup.id,
+        description: "Allow inbound traffic from ALB"
+    });
+
+    // Create Application Load Balancer
+    const webappLoadBalancer = new aws.lb.LoadBalancer(`diese-alb-${env}`, {
+        internal: false,
+        loadBalancerType: "application",
+        securityGroups: [albSecurityGroup.id],
+        subnets: [computeSubnet1.id, computeSubnet2.id],
+        enableDeletionProtection: env === "prod",
+        idleTimeout: 60,
+        tags: {
+            Name: `diese-alb-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Create Target Group with Fargate-optimized settings
+    const webappTargetGroup = new aws.lb.TargetGroup(`diese-tg-${env}`, {
+        port: webAppPort,
+        protocol: "HTTP",
+        vpcId: computeVpc.id,
+        targetType: "ip",
+        deregistrationDelay: 30,
+        healthCheck: {
+            enabled: true,
+            path: "/api/health",
+            port: `${webAppPort}`,
+            protocol: "HTTP",
+            healthyThreshold: 2,
+            unhealthyThreshold: 2,
+            timeout: 5,
+            interval: 15,
+            matcher: "200-299"
+        },
+        stickiness: {
+            type: "lb_cookie",
+            cookieDuration: 86400,
+            enabled: true
+        },
+        tags: {
+            Name: `diese-tg-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Create HTTP Listener (will redirect to HTTPS)
+    const webappHttpListener = new aws.lb.Listener(`diese-http-listener-${env}`, {
+        loadBalancerArn: webappLoadBalancer.arn,
+        port: 80,
+        protocol: "HTTP",
+        defaultActions: [{
+            type: "redirect",
+            redirect: {
+                port: "443",
+                protocol: "HTTPS",
+                statusCode: "HTTP_301"
+            }
+        }],
+        tags: {
+            Name: `diese-http-listener-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+
+    // Create HTTPS Listener with improved security settings
+    const webappHttpsListener = certificateResources ? new aws.lb.Listener(`diese-https-listener-${env}`, {
+        loadBalancerArn: webappLoadBalancer.arn,
+        port: 443,
+        protocol: "HTTPS",
+        sslPolicy: "ELBSecurityPolicy-TLS-1-2-2017-01",
+        certificateArn: certificateResources.webAppCertificate.arn,
+        defaultActions: [{
+            type: "forward",
+            targetGroupArn: webappTargetGroup.arn
+        }],
+        tags: {
+            Name: `diese-https-listener-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    }) : undefined;
+
     // Create auto scaling target for the Fargate service
     type AutoScalingResources = {
         service: pulumi.Output<aws.ecs.Service>;
@@ -409,17 +674,23 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
     } | null;
     
     let autoScalingResources: AutoScalingResources = null;
-    
+
+    // Update the service configuration to use the target group
     if (env === "staging" || env === "production") {
-        // Create the ECS service first to attach auto scaling to
-        const service = pulumi
-        .all([cluster.name, taskDefinition.arn, ecsSecurityGroup.id])
-        .apply(([clusterName, taskDefinitionArn, ecsSecurityGroupId]) => {
+        autoScalingResources = pulumi.all([
+            cluster.name,
+            taskDefinition.arn,
+            ecsSecurityGroup.id,
+            computeSubnet1.id,
+            computeSubnet2.id,
+            webappTargetGroup.arn
+        ]).apply(([clusterName, taskDefinitionArn, ecsSecurityGroupId, subnet1Id, subnet2Id, tgArn]) => {
             logEcrEvent(env, "Creating ECS service with ECR image", {
                 clusterName,
                 taskDefinitionArn
             });
-            return new aws.ecs.Service(`diese-service-${env}`, {
+
+            const service = new aws.ecs.Service(`diese-service-${env}`, {
                 cluster: clusterName,
                 desiredCount: env === "production" ? 1 : 1,
                 launchType: "FARGATE",
@@ -427,76 +698,72 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
                 healthCheckGracePeriodSeconds: 60,
                 networkConfiguration: {
                     assignPublicIp: true,
-                    subnets: [dbResources.subnet1.id, dbResources.subnet2.id],
+                    subnets: [subnet1Id, subnet2Id],
                     securityGroups: [ecsSecurityGroupId]
                 },
+                loadBalancers: [{
+                    targetGroupArn: tgArn,
+                    containerName: `diese-container-${env}`,
+                    containerPort: webAppPort
+                }],
                 platformVersion: "LATEST",
                 schedulingStrategy: "REPLICA",
+                deploymentController: {
+                    type: "ECS"
+                },
                 deploymentMinimumHealthyPercent: 100,
-                deploymentMaximumPercent: 200
+                deploymentMaximumPercent: 200,
+                waitForSteadyState: true
             });
-        }).apply(service => {
-            logEcrEvent(env, "ECS service created successfully", {
-                serviceName: service.name,
-                serviceArn: service.id
-            });
-            return service;
-        });
 
-        // Create auto scaling target
-        const scalingTarget = pulumi.all([service.name, cluster.name]).apply(([serviceName, clusterName]) => {
-            return new aws.appautoscaling.Target(`diese-scaling-target-${env}`, {
+            // Create auto scaling target
+            const scalingTarget = new aws.appautoscaling.Target(`diese-scaling-target-${env}`, {
                 maxCapacity: ecsMaxContainers,
                 minCapacity: ecsMinContainers,
-                resourceId: pulumi.interpolate`service/${clusterName}/${serviceName}`,
+                resourceId: pulumi.interpolate`service/${clusterName}/${service.name}`,
                 scalableDimension: "ecs:service:DesiredCount",
                 serviceNamespace: "ecs"
             });
-        })
 
-        // Create CPU scaling policy
-        const cpuScaling = pulumi.all([scalingTarget.resourceId, scalingTarget.scalableDimension, scalingTarget.serviceNamespace]).apply(([resourceId, scalableDimension, serviceNamespace]) => {
-            return new aws.appautoscaling.Policy(`diese-cpu-scaling-${env}`, {
+            // Create CPU scaling policy
+            const cpuScaling = new aws.appautoscaling.Policy(`diese-cpu-scaling-${env}`, {
                 policyType: "TargetTrackingScaling",
-                resourceId: resourceId,
-                scalableDimension: scalableDimension,
-                serviceNamespace: serviceNamespace,
+                resourceId: scalingTarget.resourceId,
+                scalableDimension: scalingTarget.scalableDimension,
+                serviceNamespace: scalingTarget.serviceNamespace,
                 targetTrackingScalingPolicyConfiguration: {
-                predefinedMetricSpecification: {
-                    predefinedMetricType: "ECSServiceAverageCPUUtilization"
-                },
+                    predefinedMetricSpecification: {
+                        predefinedMetricType: "ECSServiceAverageCPUUtilization"
+                    },
                     targetValue: 70.0,
                     scaleInCooldown: 300,
                     scaleOutCooldown: 60
                 }
             });
-        })
 
-        // Create memory scaling policy
-        const memoryScaling = pulumi.all([scalingTarget.resourceId, scalingTarget.scalableDimension, scalingTarget.serviceNamespace]).apply(([resourceId, scalableDimension, serviceNamespace]) => {
-            return new aws.appautoscaling.Policy(`diese-memory-scaling-${env}`, {
+            // Create memory scaling policy
+            const memoryScaling = new aws.appautoscaling.Policy(`diese-memory-scaling-${env}`, {
                 policyType: "TargetTrackingScaling",
-                resourceId: resourceId,
-                scalableDimension: scalableDimension,
-                serviceNamespace: serviceNamespace,
+                resourceId: scalingTarget.resourceId,
+                scalableDimension: scalingTarget.scalableDimension,
+                serviceNamespace: scalingTarget.serviceNamespace,
                 targetTrackingScalingPolicyConfiguration: {
-                predefinedMetricSpecification: {
-                    predefinedMetricType: "ECSServiceAverageMemoryUtilization"
-                },
+                    predefinedMetricSpecification: {
+                        predefinedMetricType: "ECSServiceAverageMemoryUtilization"
+                    },
                     targetValue: 80.0,
                     scaleInCooldown: 300,
                     scaleOutCooldown: 60
                 }
             });
-        })
 
-        autoScalingResources = pulumi.all([service, scalingTarget, cpuScaling, memoryScaling])
-            .apply(([svc, target, cpu, mem]) => ({
-                service: svc,
-                scalingTarget: target,
-                cpuScaling: cpu,
-                memoryScaling: mem
-            }));
+            return {
+                service,
+                scalingTarget,
+                cpuScaling,
+                memoryScaling
+            };
+        });
     }
 
     // Create VPC Endpoint for Secrets Manager
@@ -505,11 +772,12 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
         secretsManagerVpcEndpoint,
         s3VpcEndpoint,
         ecrApiVpcEndpoint,
-        ecrDkrVpcEndpoint
-    } = pulumi.all([dbResources.vpc.id, ecsSecurityGroup.id, dbResources.subnet1.id, dbResources.subnet2.id]).apply(([vpcId, securityGroupId, subnet1Id, subnet2Id]) => {
+        ecrDkrVpcEndpoint,
+        cloudwatchLogsVpcEndpoint
+    } = pulumi.all([computeVpc.id , computeVpc.mainRouteTableId, ecsSecurityGroup.id, computeSubnet1.id, computeSubnet2.id]).apply(([vpcId, mainRouteTableId, securityGroupId, subnet1Id, subnet2Id]) => {
         // Secrets Manager VPC Endpoint
         const secretsManagerEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-secrets-vpc-endpoint`, {
-            vpcId,
+            vpcId: vpcId,
             serviceName: `com.amazonaws.${aws.config.region}.secretsmanager`,
             vpcEndpointType: "Interface",
             subnetIds: [subnet1Id, subnet2Id],
@@ -526,7 +794,7 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
             vpcId: vpcId,
             serviceName: `com.amazonaws.${aws.config.region}.s3`,
             vpcEndpointType: "Gateway",
-            routeTableIds: [dbResources.vpc.mainRouteTableId],
+            routeTableIds: [mainRouteTableId],
             tags: {
                 Name: `${env}-diese-s3-vpc-endpoint`,
                 Environment: env
@@ -561,28 +829,48 @@ export function createEcsCluster(env: string, ecrImageRepository: Repository, db
             }
         });
 
+        // CloudWatch Logs VPC Endpoint
+        const cloudwatchLogsEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-cloudwatch-logs-endpoint`, {
+            vpcId: vpcId,
+            serviceName: `com.amazonaws.${aws.config.region}.logs`,
+            vpcEndpointType: "Interface",
+            subnetIds: [subnet1Id, subnet2Id],
+            securityGroupIds: [securityGroupId],
+            privateDnsEnabled: true,
+            tags: {
+                Name: `${env}-diese-cloudwatch-logs-endpoint`,
+                Environment: env
+            }
+        });
+
         return {
             secretsManagerVpcEndpoint: secretsManagerEndpoint,
             s3VpcEndpoint: s3Endpoint,
             ecrApiVpcEndpoint: ecrApiEndpoint,
-            ecrDkrVpcEndpoint: ecrDkrEndpoint
+            ecrDkrVpcEndpoint: ecrDkrEndpoint,
+            cloudwatchLogsVpcEndpoint: cloudwatchLogsEndpoint
         };
     });
 
     return {
-        cluster,
-        taskDefinition,
-        taskExecutionRole,
-        taskRole,
-        logGroup,
-        secret,
-        secretVersion,
-        dbSecret,
+        cluster: pulumi.output(cluster),
+        taskDefinition: pulumi.output(taskDefinition),
+        taskExecutionRole: pulumi.output(taskExecutionRole),
+        taskRole: pulumi.output(taskRole),
+        logGroup: pulumi.output(logGroup),
+        secret: pulumi.output(secret),
+        secretVersion: pulumi.output(secretVersion),
+        dbSecret: pulumi.output(dbSecret),
         autoScalingResources,
-        ecsSecurityGroup,
-        secretsManagerVpcEndpoint,
-        s3VpcEndpoint,
-        ecrApiVpcEndpoint,
-        ecrDkrVpcEndpoint
+        ecsSecurityGroup: pulumi.output(ecsSecurityGroup),
+        secretsManagerVpcEndpoint: pulumi.output(secretsManagerVpcEndpoint),
+        s3VpcEndpoint: pulumi.output(s3VpcEndpoint),
+        ecrApiVpcEndpoint: pulumi.output(ecrApiVpcEndpoint),
+        ecrDkrVpcEndpoint: pulumi.output(ecrDkrVpcEndpoint),
+        cloudwatchLogsVpcEndpoint: pulumi.output(cloudwatchLogsVpcEndpoint),
+        webappLoadBalancer: pulumi.output(webappLoadBalancer),
+        webappTargetGroup: pulumi.output(webappTargetGroup),
+        webappHttpListener: pulumi.output(webappHttpListener),
+        webappHttpsListener: pulumi.output(webappHttpsListener)
     };
 }

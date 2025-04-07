@@ -1,20 +1,28 @@
 import * as aws from "@pulumi/aws";
+import * as pulumi from "@pulumi/pulumi";
 
-export function createCertificates(env: string) {
+export interface CertificateResources {
+    webAppCertificate: pulumi.Output<aws.acm.Certificate>;
+    webAppCertificateValidation: pulumi.Output<aws.acm.CertificateValidation>;
+}
+
+export function createCertificates(env: string): CertificateResources {
+    const config = new pulumi.Config();
+    const webAppDomain = config.require("web_app_domain");
     // Create ACM certificate for staging.diese.ai
     const name = `${env}-diese-certificate`;
     const webAppCertificate = new aws.acm.Certificate(name, {
-        domainName: "staging.diese.ai",
+        domainName: webAppDomain,
         validationMethod: "DNS",
         tags: {
             Environment: env,
-            Name: "staging-diese-certificate"
+            Name: `${env}-diese-certificate`
         }
     });
 
     // Create validation record
-    const stagingCertificateValidationName = `${env}-diese-certificate-validation`;
-    const webAppCertificateValidation = new aws.acm.CertificateValidation(stagingCertificateValidationName, {
+    const webAppCertificateValidationName = `${env}-diese-certificate-validation`;
+    const webAppCertificateValidation = new aws.acm.CertificateValidation(webAppCertificateValidationName, {
         certificateArn: webAppCertificate.arn,
         validationRecordFqdns: webAppCertificate.domainValidationOptions.apply(
             options => options.map(option => option.resourceRecordName)
@@ -22,8 +30,8 @@ export function createCertificates(env: string) {
     });
 
     return {
-        webAppCertificate,
-        webAppCertificateValidation
+        webAppCertificate: pulumi.output(webAppCertificate),
+        webAppCertificateValidation: pulumi.output(webAppCertificateValidation)
     };
 }
 

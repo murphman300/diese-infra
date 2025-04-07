@@ -6,6 +6,8 @@ config:
   main_db_username: diese_admin
   authorized_domains:
     - https://staging.diese.ai
+  web_app_port: 8001
+  web_app_domain: staging.diese.ai
   ecs_cpu: 256
   ecs_memory: 512
   ecs_min_containers: 1
