@@ -269,17 +269,19 @@ export function createDatabase(env: string): DatabaseResources {
     });
 
 
-    const dbSecretVersion = new aws.secretsmanager.SecretVersion(`${dbName}-secret-version`, {
-        secretId: dbSecret.id,
-        secretString: pulumi.jsonStringify({
-            DB_USERNAME: dbUsername,
-            DB_PASSWORD: newRandomPassword,
-            DB_PORT: 5432,
-            DB_HOST: db.endpoint,
-            DB_NAME: dbName
-        }),
+    const dbSecretVersion = pulumi.all([newRandomPassword, db.endpoint]).apply(([password, dbEndpoint]) => {
+        return new aws.secretsmanager.SecretVersion(`${dbName}-secret-version`, {
+            secretId: dbSecret.id,
+            secretString: pulumi.jsonStringify({
+                DB_USERNAME: dbUsername,
+                DB_PASSWORD: password,
+                DB_PORT: 5432,
+                DB_HOST: dbEndpoint,
+                DB_NAME: dbName,
+                DATABASE_URL: `postgresql://${dbUsername}:${password}@${dbEndpoint}/${dbName}`
+            }),
+        });
     });
-
     return {
         vpc,
         subnet1,

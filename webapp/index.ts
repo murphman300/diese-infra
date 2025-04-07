@@ -501,25 +501,8 @@ export function createEcsCluster(
                         name: "OPENAI_API_KEY",
                         valueFrom: `${secretArn}`
                     },
-                    // DB secrets
                     {
-                        name: "DB_USERNAME",
-                        valueFrom: `${dbSecretArn}`
-                    },
-                    {
-                        name: "DB_PASSWORD",
-                        valueFrom: `${dbSecretArn}`
-                    },
-                    {
-                        name: "DB_HOST",
-                        valueFrom: `${dbSecretArn}`
-                    },
-                    {
-                        name: "DB_PORT",
-                        valueFrom: `${dbSecretArn}`
-                    },
-                    {
-                        name: "DB_NAME",
+                        name: "DATABASE_URL",
                         valueFrom: `${dbSecretArn}`
                     }
                 ]
