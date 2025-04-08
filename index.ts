@@ -1,7 +1,7 @@
 import * as pulumi from "@pulumi/pulumi";
 import createIAMResources from "./iam/index";
 import createCertificates from "./certificates/index";
-import createContainerRegistry from "./container-registry/index";
+import createContainerRegistry, { createMigrationsContainerRegistry } from "./container-registry/index";
 import createDatabases from "./databases/index";
 import { createEcsCluster } from "./webapp/index";
 
@@ -17,11 +17,13 @@ const certificates = createCertificates(env);
 // Create container registry
 const containerRegistry = createContainerRegistry(env);
 
+const migrationsContainerRegistry = createMigrationsContainerRegistry(env);
+
 // Create databases
 const databases = createDatabases(env);
 
 // Create ECS cluster and related resources (including ALB)
-const webapp = createEcsCluster(env, containerRegistry.repository, databases, certificates);
+const webapp = createEcsCluster(env, containerRegistry.repository, databases, migrationsContainerRegistry.repository, certificates);
 
 // Export necessary values
 export const albDnsName = webapp.webappLoadBalancer.dnsName;

@@ -36,6 +36,7 @@ export function createGitHubRunnerIAMResources(env: string) {
                         "ecs:DeleteService",
                         "ecs:CreateService",
                         "ecs:ListServices",
+                        "ecs:ListTaskDefinitions",
                         // Deployment and rollback specific permissions
                         "ecs:DeregisterTaskDefinition",
                         "ecs:DescribeTaskSets",

@@ -32,6 +32,7 @@ export interface EcsClusterResources {
     webappTargetGroup: pulumi.Output<aws.lb.TargetGroup>;
     webappHttpListener: pulumi.Output<aws.lb.Listener>;
     webappHttpsListener: pulumi.Output<aws.lb.Listener | undefined>;
+    migrationTaskDefinition: pulumi.Output<aws.ecs.TaskDefinition>;
 }
 
 // Helper function to log ECR events
@@ -51,6 +52,7 @@ export function createEcsCluster(
     env: string,
     ecrImageRepository: Repository,
     dbResources: DatabaseResources,
+    migrationsContainerRegistry: Repository,
     certificateResources?: CertificateResources
 ): EcsClusterResources {
     
@@ -202,6 +204,37 @@ export function createEcsCluster(
         }
     });
 
+    // Create security group for VPC endpoints
+    const vpcEndpointSecurityGroup = pulumi.all([computeVpc.id, ecsSecurityGroup.id]).apply(([vpcId, ecsSecurityGroupId]) => {
+        return new aws.ec2.SecurityGroup(`diese-vpc-endpoint-sg-${env}`, {
+            vpcId: vpcId,
+            description: "Security group for VPC endpoints",
+            ingress: [
+                {
+                    protocol: "tcp",
+                    fromPort: 443,
+                    toPort: 443,
+                    securityGroups: [ecsSecurityGroupId],
+                    description: "Allow HTTPS from ECS tasks"
+                }
+            ],
+            egress: [
+                {
+                    protocol: "-1",
+                    fromPort: 0,
+                    toPort: 0,
+                    cidrBlocks: ["0.0.0.0/0"],
+                    description: "Allow all outbound traffic"
+                }
+            ],
+            tags: {
+                Name: `diese-vpc-endpoint-sg-${env}`,
+                Environment: env,
+                ManagedBy: "pulumi"
+            }
+        });
+    });
+
     // Update the database security group to allow access from compute VPC's ECS tasks
     const dbIngressRule = pulumi.all([dbResources.securityGroup.id, ecsSecurityGroup.id]).apply(([dbSecurityGroupId, ecsSecurityGroupId]) => {
         return new aws.ec2.SecurityGroupRule(`diese-db-from-ecs-${env}`, {
@@ -267,6 +300,42 @@ export function createEcsCluster(
     new aws.iam.RolePolicyAttachment(`diese-task-execution-policy-${env}`, {
         role: taskExecutionRole.name,
         policyArn: "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+    });
+
+    // Add ECR pull permissions for any repository
+    const ecrPullPolicy = new aws.iam.Policy(`diese-ecr-pull-policy-${env}`, {
+        description: "Policy allowing pulling images from any ECR repository",
+        policy: pulumi.all([ecrImageRepository.arn, migrationsContainerRegistry.arn])
+            .apply(([ecrArn, migrationsArn]) => JSON.stringify({
+                Version: "2012-10-17",
+                Statement: [
+                    {
+                        Effect: "Allow",
+                        Action: [
+                            "ecr:GetAuthorizationToken"
+                        ],
+                        Resource: "*"
+                    },
+                    {
+                        Effect: "Allow",
+                        Action: [
+                            "ecr:BatchGetImage",
+                            "ecr:GetDownloadUrlForLayer",
+                            "ecr:BatchCheckLayerAvailability"
+                        ],
+                        Resource: [
+                            ecrArn,
+                            migrationsArn
+                        ]
+                    }
+                ]
+            }))
+    });
+
+    // Attach ECR pull policy to task execution role
+    new aws.iam.RolePolicyAttachment(`diese-ecr-pull-policy-attachment-${env}`, {
+        role: taskExecutionRole.name,
+        policyArn: ecrPullPolicy.arn
     });
 
     // Create a secrets manager secret for the application
@@ -757,14 +826,14 @@ export function createEcsCluster(
         ecrApiVpcEndpoint,
         ecrDkrVpcEndpoint,
         cloudwatchLogsVpcEndpoint
-    } = pulumi.all([computeVpc.id , computeVpc.mainRouteTableId, ecsSecurityGroup.id, computeSubnet1.id, computeSubnet2.id]).apply(([vpcId, mainRouteTableId, securityGroupId, subnet1Id, subnet2Id]) => {
+    } = pulumi.all([computeVpc.id, computeVpc.mainRouteTableId, vpcEndpointSecurityGroup.id, computeSubnet1.id, computeSubnet2.id]).apply(([vpcId, mainRouteTableId, endpointSecurityGroupId, subnet1Id, subnet2Id]) => {
         // Secrets Manager VPC Endpoint
         const secretsManagerEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-secrets-vpc-endpoint`, {
             vpcId: vpcId,
             serviceName: `com.amazonaws.${aws.config.region}.secretsmanager`,
             vpcEndpointType: "Interface",
             subnetIds: [subnet1Id, subnet2Id],
-            securityGroupIds: [securityGroupId],
+            securityGroupIds: [endpointSecurityGroupId],
             privateDnsEnabled: true,
             tags: {
                 Name: `${env}-diese-secrets-vpc-endpoint`,
@@ -788,9 +857,9 @@ export function createEcsCluster(
         const ecrApiEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-ecr-api-endpoint`, {
             vpcId: vpcId,
             serviceName: `com.amazonaws.${aws.config.region}.ecr.api`,
-            vpcEndpointType: "Interface", 
+            vpcEndpointType: "Interface",
             subnetIds: [subnet1Id, subnet2Id],
-            securityGroupIds: [securityGroupId],
+            securityGroupIds: [endpointSecurityGroupId],
             privateDnsEnabled: true,
             tags: {
                 Name: `${env}-diese-ecr-api-endpoint`,
@@ -804,7 +873,7 @@ export function createEcsCluster(
             serviceName: `com.amazonaws.${aws.config.region}.ecr.dkr`,
             vpcEndpointType: "Interface",
             subnetIds: [subnet1Id, subnet2Id],
-            securityGroupIds: [securityGroupId],
+            securityGroupIds: [endpointSecurityGroupId],
             privateDnsEnabled: true,
             tags: {
                 Name: `${env}-diese-ecr-dkr-endpoint`,
@@ -818,7 +887,7 @@ export function createEcsCluster(
             serviceName: `com.amazonaws.${aws.config.region}.logs`,
             vpcEndpointType: "Interface",
             subnetIds: [subnet1Id, subnet2Id],
-            securityGroupIds: [securityGroupId],
+            securityGroupIds: [endpointSecurityGroupId],
             privateDnsEnabled: true,
             tags: {
                 Name: `${env}-diese-cloudwatch-logs-endpoint`,
@@ -834,6 +903,57 @@ export function createEcsCluster(
             cloudwatchLogsVpcEndpoint: cloudwatchLogsEndpoint
         };
     });
+
+    // Create a task definition for the migrations container
+    const migrationTaskDefinition = pulumi
+    .all([secret.arn, dbSecret.arn, migrationsContainerRegistry.repositoryUrl, taskExecutionRole.arn, taskRole.arn])
+    .apply(([secretArn, dbSecretArn, migrationsImageUri, taskExecutionRoleArn, taskRoleArn]) => {
+        return new aws.ecs.TaskDefinition(`diese-migration-task-definition-${env}`, {
+            family: `${env}-diese-web-app-db-migrations-repository`,
+            cpu: ecsCpu.toString(),
+            memory: ecsMemory.toString(),
+            networkMode: "awsvpc",  // Required for Fargate
+            requiresCompatibilities: ["FARGATE"],
+            executionRoleArn: taskExecutionRoleArn,
+            taskRoleArn: taskRoleArn,
+            containerDefinitions: JSON.stringify([{
+                name: `diese-migrations-container-${env}`,
+                image: `${migrationsImageUri}:latest`,
+                essential: true,
+                memoryReservation: ecsMemoryTarget,
+                cpu: ecsCpuTarget,
+                environment: [
+                    {
+                        name: "NODE_ENV",
+                        value: env
+                    }
+                ],
+                logConfiguration: {
+                    logDriver: "awslogs",
+                    options: {
+                        "awslogs-group": `/ecs/diese-${env}`,
+                        "awslogs-region": aws.config.region || "us-east-1",
+                        "awslogs-stream-prefix": "migrations",
+                        "awslogs-create-group": "true"
+                    }
+                },
+                secrets: [
+                    {
+                        name: "DATABASE_URL",
+                        valueFrom: `${dbSecretArn}`
+                    }
+                ]
+            }])
+        });
+    });
+
+    // Add a comment to explain how to run the migration task with the correct network configuration
+    // When running the task, use this command:
+    // aws ecs run-task \
+    //   --cluster diese-cluster-staging \
+    //   --task-definition staging-diese-web-app-db-migrations-repository \
+    //   --launch-type FARGATE \
+    //   --network-configuration "awsvpcConfiguration={subnets=[subnet-1,subnet-2],securityGroups=[sg-xxx],assignPublicIp=ENABLED}"
 
     return {
         cluster: pulumi.output(cluster),
@@ -854,6 +974,7 @@ export function createEcsCluster(
         webappLoadBalancer: pulumi.output(webappLoadBalancer),
         webappTargetGroup: pulumi.output(webappTargetGroup),
         webappHttpListener: pulumi.output(webappHttpListener),
-        webappHttpsListener: pulumi.output(webappHttpsListener)
+        webappHttpsListener: pulumi.output(webappHttpsListener),
+        migrationTaskDefinition: pulumi.output(migrationTaskDefinition)
     };
 }
