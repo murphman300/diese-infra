@@ -5,6 +5,7 @@ import createContainerRegistry, { createMigrationsContainerRegistry } from "./co
 import createDatabases from "./databases/index";
 import { createEcsCluster } from "./webapp/index";
 import { createEC2 } from "./ec2/index";
+import { declareS3Buckets } from "./s3/index";
 let config = new pulumi.Config();
 let env = config.require("env");
 
@@ -26,6 +27,8 @@ const databases = createDatabases(env);
 const webapp = createEcsCluster(env, containerRegistry.repository, databases, migrationsContainerRegistry.repository, certificates);
 
 const ec2 = createEC2(env, webapp, databases);
+// Create S3 buckets
+const s3Buckets = declareS3Buckets(env, ec2, iamResources.githubRunner, webapp.s3VpcEndpoint);
 
 // Export necessary values
 export const albDnsName = webapp.webappLoadBalancer.dnsName;
@@ -33,3 +36,4 @@ export const albZoneId = webapp.webappLoadBalancer.zoneId;
 export const targetGroupArn = webapp.webappTargetGroup.arn;
 export const ecsServiceArn = webapp.autoScalingResources?.service.id;
 // export const bastionHostIp = ec2.instances.bastionInstance.publicIp;
+export const appsBucketName = s3Buckets;

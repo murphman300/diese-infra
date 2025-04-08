@@ -3,7 +3,11 @@ import { EcsClusterResources } from "../webapp/index";
 import { DatabaseResources } from "../databases/index";
 import * as aws from "@pulumi/aws";
 
-export function createEC2Instances(env: string, resources: EC2Resources, cluster: EcsClusterResources, databases: DatabaseResources) {
+export interface EC2InstancesResources {
+    
+}
+
+export function createEC2Instances(env: string, resources: EC2Resources, cluster: EcsClusterResources, databases: DatabaseResources) : EC2InstancesResources{
     const bastionName = `${env}-ec2-bastion-host`;
 
     // const bastionInstance = new aws.ec2.Instance(bastionName, {

@@ -1,7 +1,16 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 
-export function createGitHubRunnerIAMResources(env: string) {
+export interface GitHubRunnerIAMResources {
+    accessKeyId: pulumi.Output<string>;
+    secretAccessKey: pulumi.Output<string>;
+    policyAttachment: aws.iam.UserPolicyAttachment;
+    ecsDeploymentPolicy: aws.iam.Policy;
+    githubActionsUser: aws.iam.User;
+    githubActionsUserKeys: aws.iam.AccessKey;
+}
+
+export function createGitHubRunnerIAMResources(env: string): GitHubRunnerIAMResources {
     // Create IAM user for GitHub Actions
     const githubActionsUserName = `${env}-github-actions-ecs-user`;
     const githubActionsUser = new aws.iam.User(githubActionsUserName, {
