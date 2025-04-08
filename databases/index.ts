@@ -1,4 +1,6 @@
-import createDatabase from "./main";
+import createDatabase, { DatabaseResources } from "./main";
+
+export type { DatabaseResources };
 
 export function createStagingDatabase() {
     return createDatabase("staging");
