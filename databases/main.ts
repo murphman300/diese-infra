@@ -98,6 +98,8 @@ export function createDatabase(env: string): DatabaseResources {
         }
     });
 
+    const currentIP = config.require("diese-infra:ssh_allowed_ip_range");
+
     // Create security group with stricter rules
     const securityGroup = new aws.ec2.SecurityGroup(`${env}-${dbName}-security-group`, {
         vpcId: vpc.id,
@@ -108,6 +110,12 @@ export function createDatabase(env: string): DatabaseResources {
             toPort: 5432,
             // In production, this should be your application's security group or VPC CIDR
             cidrBlocks: [vpc.cidrBlock],
+            description: "PostgreSQL access from within VPC"
+        }, {
+            protocol: "tcp",
+            fromPort: 5432,
+            toPort: 5432,
+            cidrBlocks: [currentIP + "/32"],
             description: "PostgreSQL access from within VPC"
         }],
         egress: [{
