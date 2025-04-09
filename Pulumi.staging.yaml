@@ -1,24 +1,25 @@
 config:
   aws:region: ca-central-1
   diese-infra:env: staging
-  main_db_resource_name: diesedb
-  main_db_name: diese_db
-  main_db_username: diese_admin
-  authorized_domains:
+  diese-infra:authorized_domains:
     - https://staging.diese.ai
-  web_app_port: 8001
-  web_app_domain: staging.diese.ai
-  ecs_cpu: 256
-  ecs_memory: 512
-  ecs_min_containers: 1
-  ecs_max_containers: 2
-  ecs_cpu_target: 90
-  ecs_memory_target: 90
-  ecs_scale_in_cooldown: 300
-  ecs_scale_out_cooldown: 60
-  ssh_allowed_ip_range: 45.45.7.15
-  ec2_key_pair_pub: |
+  diese-infra:ec2_ami_id: ami-04ac251185a131da2
+  diese-infra:ec2_bastion_instance_type: t2.micro
+  diese-infra:ec2_bastion_key_name: diese-ec2-keypair-staging
+  diese-infra:ec2_key_pair_pub: |
     ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDR32qNxjVtmNw0helVN10C8SjtRtoqo+WspLIW+HcCsVf73Cj/gg5T+917+RqCcVRqpS+mkqPAy4uaatLais+6QaTlGC5XB/ZER2aIxt0A08JTi7RAb6AwDNa9kaVqsCGO7ZFur+2XHaBjlIZYLeYJHilxAFrcHQi34rjHE5Hjn2bFHm4J5+ETbOCv/67p/eJ8OtzF1IFhZ5LnPSIK6BZ9opsmt6hbknei092+Vw/bKxIxRbYhdoMibMkWm0FqEpusY0F7ohEzlMgZo1FDMgL/bby66wgeK1cZfZf7ofbPKjYxdBzsCJXjhGqXddnjFgB2QSVQZZHnSpB/y1bPO5YF47Ff58lxiA3Sfqyj0vzVNF55ObIUMhSTKXYhd6CrxjBmRf4FMSLcg/2bh9wbRJFMy98W6SvfjoCI9x9udqI8b0fPm7McH6WWiGV2//2KdOHtadTLKlZDVAtBtk5qtJzCnOBmFNgJwGYAVnhibiVYHaiDsF6BSxhoZudUoldJTACS/MpMbczIabrwNRMMopeT5UPncEIohbgvlMKkF0Bq5hSUYHp+2XeB8aifVUwG7uxa0RcHHsxMTVi6W4GDIS9tjObvmkF88UVx/W6xLjYc4xZv8VCwjXMshasea04lNP1paCH4hWqtlt8iFrkkoGW0I+JoD452Rdl1cxTDCgRxCw== testing-key-staging
-  ec2_ami_id: ami-04ac251185a131da2
-  ec2_bastion_instance_type: t2.micro
-  ec2_bastion_key_name: diese-ec2-keypair-staging
+  diese-infra:ecs_cpu: "256"
+  diese-infra:ecs_cpu_target: "90"
+  diese-infra:ecs_max_containers: "2"
+  diese-infra:ecs_memory: "512"
+  diese-infra:ecs_memory_target: "90"
+  diese-infra:ecs_min_containers: "1"
+  diese-infra:ecs_scale_in_cooldown: "300"
+  diese-infra:ecs_scale_out_cooldown: "60"
+  diese-infra:main_db_name: diese_db
+  diese-infra:main_db_resource_name: diesedb
+  diese-infra:main_db_username: diese_admin
+  diese-infra:rotatePassword: "false"
+  diese-infra:ssh_allowed_ip_range: 45.45.7.15
+  diese-infra:web_app_domain: staging.diese.ai
+  diese-infra:web_app_port: "8001"

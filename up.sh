@@ -17,6 +17,8 @@ fi
 # Check for --rotate-pwd flag
 if [[ "$*" == *"--rotate-pwd"* ]]; then
     pulumi config set rotatePassword true
+else
+    pulumi config set rotatePassword false
 fi
 
 # Run pulumi up on index-staging.ts

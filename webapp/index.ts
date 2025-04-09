@@ -39,6 +39,7 @@ export interface EcsClusterResources {
     webappHttpListener: pulumi.Output<aws.lb.Listener>;
     webappHttpsListener: pulumi.Output<aws.lb.Listener | undefined>;
     migrationTaskDefinition: pulumi.Output<aws.ecs.TaskDefinition>;
+    webAppEcsSecurityGroupRule: pulumi.Output<aws.ec2.SecurityGroupRule>;
 }
 
 // Helper function to log ECR events
@@ -259,17 +260,21 @@ export function createEcsCluster(
     });
 
     // Update the database security group to allow access from compute VPC's ECS tasks
-    const dbIngressRule = pulumi.all([dbResources.securityGroup.id, ecsSecurityGroup.id]).apply(([dbSecurityGroupId, ecsSecurityGroupId]) => {
-        return new aws.ec2.SecurityGroupRule(`diese-db-from-ecs-${env}`, {
-            type: "ingress",
-            fromPort: 5432,
-            toPort: 5432,
-            protocol: "tcp",
-            sourceSecurityGroupId: ecsSecurityGroupId,
-            securityGroupId: dbSecurityGroupId,
-            description: "Allow PostgreSQL access from ECS tasks"
-        });
-    });
+    // const dbIngressRule = pulumi.all([dbResources.securityGroup.id, ecsSecurityGroup.id]).apply(([dbSecurityGroupId, ecsSecurityGroupId]) => {
+    //     return new aws.ec2.SecurityGroupRule(`diese-db-from-ecs-${env}`, {
+    //         type: "ingress",
+    //         fromPort: 5432,
+    //         toPort: 5432,
+    //         protocol: "tcp",
+    //         sourceSecurityGroupId: ecsSecurityGroupId,
+    //         securityGroupId: dbSecurityGroupId,
+    //         description: "Allow PostgreSQL access from ECS tasks"
+    //     });
+    // });
+    
+
+    const webAppEcsSecurityGroupRule = dbResources.allowlistSecurityGroupInDBVPC(ecsSecurityGroup, "web-app-ecs");
+
 
     // Create an ECS cluster for Fargate
     const cluster = new aws.ecs.Cluster(`diese-cluster-${env}`, {
@@ -1057,6 +1062,7 @@ export function createEcsCluster(
         webappTargetGroup: pulumi.output(webappTargetGroup),
         webappHttpListener: pulumi.output(webappHttpListener),
         webappHttpsListener: pulumi.output(webappHttpsListener),
-        migrationTaskDefinition: pulumi.output(migrationTaskDefinition)
+        migrationTaskDefinition: pulumi.output(migrationTaskDefinition),
+        webAppEcsSecurityGroupRule: pulumi.output(webAppEcsSecurityGroupRule)
     };
 }

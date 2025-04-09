@@ -12,5 +12,6 @@ export function createEC2(env: string, cluster: EcsClusterResources, databases: 
     const name = `${env}-ec2-bastion-host`;
     const resources = createEC2Resources(name, env, cluster);
     const instances = createEC2Instances(env, resources, cluster, databases);
+    const bastionToDBSecurityGroupRule = databases.allowlistSecurityGroupInDBVPC(instances.securityGroup, "bastion-ec2");
     return { resources, instances };
 }

@@ -6,7 +6,8 @@ import * as aws from "@pulumi/aws";
 let config = new pulumi.Config();
 
 export interface EC2InstancesResources {
-    // bastionInstance: aws.ec2.Instance;
+    bastionInstance: aws.ec2.Instance;
+    securityGroup: aws.ec2.SecurityGroup;
 }
 
 export function createEC2Instances(env: string, resources: EC2Resources, cluster: EcsClusterResources, databases: DatabaseResources) : EC2InstancesResources {
@@ -24,7 +25,6 @@ echo "REGION=${region}" >> /home/ec2-user/.bashrc
 source /home/ec2-user/.bashrc
 `;
 
-    const bastionKeyName = config.require("ec2_bastion_key_name");
     const bastionInstance = new aws.ec2.Instance(bastionName, {
         ami: bastionAmiId,
         iamInstanceProfile: resources.instanceProfile.name,
@@ -42,6 +42,7 @@ source /home/ec2-user/.bashrc
     });
 
     return {
-        // bastionInstance
+        bastionInstance,
+        securityGroup: resources.securityGroup,
     }
 }

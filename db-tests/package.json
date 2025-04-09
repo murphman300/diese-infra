@@ -1,0 +1,16 @@
+{
+  "name": "db-tests",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.782.0",
+    "aws-sdk": "^2.1692.0",
+    "pg": "^8.14.1"
+  }
+}

@@ -16,6 +16,9 @@ export type DatabaseResources = {
     dbSecretName: pulumi.Output<string>;
     dbSecretVersionArn: pulumi.Output<string>;
     dbSecret: aws.secretsmanager.Secret;
+    vpcId: pulumi.Output<string>;
+    securityGroupId: pulumi.Output<string>;
+    allowlistSecurityGroupInDBVPC: (sourceSecurityGroup: aws.ec2.SecurityGroup, sourceSecurityGroupRuleName: string) => aws.ec2.SecurityGroupRule;
 };
 
 export function createDatabase(env: string): DatabaseResources {
@@ -176,7 +179,7 @@ export function createDatabase(env: string): DatabaseResources {
             // Otherwise, generate a new random password
             const pass = await aws.secretsmanager.getRandomPassword({
                 passwordLength: 64,
-                excludeCharacters: "\"@/\\'",
+                excludeCharacters: "!@#$%^&*()_+-={}[]|\\:;\"'<>,.?/~`",
                 includeSpace: false,
             });
             return pass.randomPassword!;
@@ -282,6 +285,19 @@ export function createDatabase(env: string): DatabaseResources {
             }),
         });
     });
+
+    const allowlistSecurityGroupInDBVPC = (sourceSecurityGroup: aws.ec2.SecurityGroup, sourceSecurityGroupRuleName: string) => {
+        return new aws.ec2.SecurityGroupRule(`${env}-${dbName}-${sourceSecurityGroupRuleName}-security-group-ingress`, {
+            type: "ingress",
+            fromPort: 5432,
+            toPort: 5432,
+            protocol: "tcp",
+            securityGroupId: securityGroup.id,
+            sourceSecurityGroupId: sourceSecurityGroup.id,
+            description: `${env}-${dbName}-${sourceSecurityGroupRuleName}-security-group-ingress`
+        });
+    }
+    
     return {
         vpc,
         subnet1,
@@ -296,8 +312,10 @@ export function createDatabase(env: string): DatabaseResources {
         dbSecretArn: dbSecret.arn,
         dbSecretName: dbSecret.name,
         dbSecretVersionArn: dbSecretVersion.arn, // Export the secret ARN for reference
-        dbSecret: dbSecret
+        dbSecret: dbSecret,
+        vpcId: vpc.id,
+        securityGroupId: securityGroup.id,
+        allowlistSecurityGroupInDBVPC,
     };
 }
-
 export default createDatabase;
