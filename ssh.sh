@@ -39,3 +39,8 @@ else
     ssh -i ~/.ssh/ec2-bastion-staging -o StrictHostKeyChecking=no ec2-user@$PUBLIC_DNS "$COMMAND"
     exit $?
 fi
+
+APPS_BUCKET=diese-ai-apps-${NODE_ENV}
+echo "APPS_BUCKET" $APPS_BUCKET
+
+aws s3 sync "s3://$APPS_BUCKET/migrations"  ~/migration --region ca-central-1

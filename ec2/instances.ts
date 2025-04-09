@@ -14,10 +14,17 @@ export function createEC2Instances(env: string, resources: EC2Resources, cluster
 
     const bastionAmiId = config.require("ec2_ami_id");
     const bastionInstanceType = config.require("ec2_bastion_instance_type");
+    const region = aws.config.region || "us-east-1";
 
-    
+    // Create a user data script to ensure SSM agent is properly configured
+    const userData = pulumi.interpolate`#!/bin/bash
+# Set NODE_ENV environment variable
+echo "NODE_ENV=${env}" >> /home/ec2-user/.bashrc
+echo "REGION=${region}" >> /home/ec2-user/.bashrc
+source /home/ec2-user/.bashrc
+`;
 
-    // const bastionKeyName = config.require("ec2_bastion_key_name");
+    const bastionKeyName = config.require("ec2_bastion_key_name");
     const bastionInstance = new aws.ec2.Instance(bastionName, {
         ami: bastionAmiId,
         iamInstanceProfile: resources.instanceProfile.name,
@@ -25,6 +32,8 @@ export function createEC2Instances(env: string, resources: EC2Resources, cluster
         vpcSecurityGroupIds: [resources.securityGroup.id],
         subnetId: cluster.computeSubnets[0].id, 
         // keyName: resources.bastionKeyPair.keyName,
+        userData: userData,
+        associatePublicIpAddress: true,
         tags: {
             Name: bastionName,
             Environment: env,

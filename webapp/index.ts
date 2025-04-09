@@ -13,6 +13,7 @@ export interface EcsClusterResources {
     taskExecutionRole: pulumi.Output<aws.iam.Role>;
     taskRole: pulumi.Output<aws.iam.Role>;
     computeVpc: pulumi.Output<aws.ec2.Vpc>;
+    vpcEndpointSecurityGroup: pulumi.Output<aws.ec2.SecurityGroup>;
     computeSubnets: pulumi.Output<aws.ec2.Subnet>[];
     logGroup: pulumi.Output<aws.cloudwatch.LogGroup>;
     secret: pulumi.Output<aws.secretsmanager.Secret>;
@@ -30,6 +31,9 @@ export interface EcsClusterResources {
     ecrApiVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
     ecrDkrVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
     cloudwatchLogsVpcEndpoint: pulumi.Output<aws.ec2.VpcEndpoint>;
+    ssmVpcEndpoint?: pulumi.Output<aws.ec2.VpcEndpoint>;
+    ec2MessagesVpcEndpoint?: pulumi.Output<aws.ec2.VpcEndpoint>;
+    ssmmessagesVpcEndpoint?: pulumi.Output<aws.ec2.VpcEndpoint>;
     webappLoadBalancer: pulumi.Output<aws.lb.LoadBalancer>;
     webappTargetGroup: pulumi.Output<aws.lb.TargetGroup>;
     webappHttpListener: pulumi.Output<aws.lb.Listener>;
@@ -80,6 +84,23 @@ export function createEcsCluster(
             Environment: env,
             ManagedBy: "pulumi"
         }
+    });
+    
+    // Ensure DNS settings are enabled for the VPC
+    const dnsHostnamesOption = new aws.ec2.VpcDhcpOptions(`diese-dhcp-options-${env}`, {
+        domainName: `${aws.config.region}.compute.internal`,
+        domainNameServers: ["AmazonProvidedDNS"],
+        tags: {
+            Name: `diese-dhcp-options-${env}`,
+            Environment: env,
+            ManagedBy: "pulumi"
+        }
+    });
+    
+    // Associate the DHCP options with the VPC
+    const dhcpOptionsAssociation = new aws.ec2.VpcDhcpOptionsAssociation(`diese-dhcp-options-association-${env}`, {
+        vpcId: computeVpc.id,
+        dhcpOptionsId: dnsHostnamesOption.id
     });
 
     // Create an Internet Gateway for the compute VPC
@@ -820,15 +841,17 @@ export function createEcsCluster(
         });
     }
 
-    // Create VPC Endpoint for Secrets Manager
-    // Create VPC Endpoints for AWS services
+    // Create VPC endpoints for AWS services
     const {
         secretsManagerVpcEndpoint,
         s3VpcEndpoint,
         ecrApiVpcEndpoint,
         ecrDkrVpcEndpoint,
-        cloudwatchLogsVpcEndpoint
-    } = pulumi.all([computeVpc.id, computeVpc.mainRouteTableId, vpcEndpointSecurityGroup.id, computeSubnet1.id, computeSubnet2.id]).apply(([vpcId, mainRouteTableId, endpointSecurityGroupId, subnet1Id, subnet2Id]) => {
+        cloudwatchLogsVpcEndpoint,
+        ssmVpcEndpoint,
+        ec2MessagesVpcEndpoint,
+        ssmmessagesVpcEndpoint
+    } = pulumi.all([computeVpc.id, computeVpc.mainRouteTableId, computeSubnet1.id, computeSubnet2.id, vpcEndpointSecurityGroup.id]).apply(([vpcId, mainRouteTableId, subnet1Id, subnet2Id, endpointSecurityGroupId]) => {
         // Secrets Manager VPC Endpoint
         const secretsManagerEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-secrets-vpc-endpoint`, {
             vpcId: vpcId,
@@ -897,12 +920,63 @@ export function createEcsCluster(
             }
         });
 
+        // SSM VPC Endpoint
+        const ssmEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-ssm-endpoint`, {
+            vpcId: vpcId,
+            serviceName: `com.amazonaws.${aws.config.region}.ssm`,
+            vpcEndpointType: "Interface",
+            subnetIds: [subnet1Id, subnet2Id],
+            securityGroupIds: [endpointSecurityGroupId],
+            privateDnsEnabled: false,
+            tags: {
+                Name: `${env}-diese-ssm-endpoint`,
+                Environment: env
+            }
+        }, {
+            ignoreChanges: ["privateDnsEnabled"],
+        });
+
+        // EC2 Messages VPC Endpoint (required for SSM)
+        const ec2MessagesEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-ec2messages-endpoint`, {
+            vpcId: vpcId,
+            serviceName: `com.amazonaws.${aws.config.region}.ec2messages`,
+            vpcEndpointType: "Interface",
+            subnetIds: [subnet1Id, subnet2Id],
+            securityGroupIds: [endpointSecurityGroupId],
+            privateDnsEnabled: false,
+            tags: {
+                Name: `${env}-diese-ec2messages-endpoint`,
+                Environment: env
+            }
+        }, {
+            ignoreChanges: ["privateDnsEnabled"],
+        });
+
+        // SSM Messages VPC Endpoint (required for Session Manager)
+        const ssmmessagesEndpoint = new aws.ec2.VpcEndpoint(`${env}-diese-ssmmessages-endpoint`, {
+            vpcId: vpcId,
+            serviceName: `com.amazonaws.${aws.config.region}.ssmmessages`,
+            vpcEndpointType: "Interface",
+            subnetIds: [subnet1Id, subnet2Id],
+            securityGroupIds: [endpointSecurityGroupId],
+            privateDnsEnabled: false,
+            tags: {
+                Name: `${env}-diese-ssmmessages-endpoint`,
+                Environment: env
+            }
+        }, {
+            ignoreChanges: ["privateDnsEnabled"],
+        });
+
         return {
             secretsManagerVpcEndpoint: secretsManagerEndpoint,
             s3VpcEndpoint: s3Endpoint,
             ecrApiVpcEndpoint: ecrApiEndpoint,
             ecrDkrVpcEndpoint: ecrDkrEndpoint,
-            cloudwatchLogsVpcEndpoint: cloudwatchLogsEndpoint
+            cloudwatchLogsVpcEndpoint: cloudwatchLogsEndpoint,
+            ssmVpcEndpoint: ssmEndpoint,
+            ec2MessagesVpcEndpoint: ec2MessagesEndpoint,
+            ssmmessagesVpcEndpoint: ssmmessagesEndpoint
         };
     });
 
@@ -963,6 +1037,7 @@ export function createEcsCluster(
         taskExecutionRole: pulumi.output(taskExecutionRole),
         taskRole: pulumi.output(taskRole),
         computeVpc: pulumi.output(computeVpc),
+        vpcEndpointSecurityGroup: pulumi.output(vpcEndpointSecurityGroup),
         computeSubnets: [pulumi.output(computeSubnet1), pulumi.output(computeSubnet2)],
         logGroup: pulumi.output(logGroup),
         secret: pulumi.output(secret),
@@ -975,6 +1050,9 @@ export function createEcsCluster(
         ecrApiVpcEndpoint: pulumi.output(ecrApiVpcEndpoint),
         ecrDkrVpcEndpoint: pulumi.output(ecrDkrVpcEndpoint),
         cloudwatchLogsVpcEndpoint: pulumi.output(cloudwatchLogsVpcEndpoint),
+        ssmVpcEndpoint: pulumi.output(ssmVpcEndpoint),
+        ec2MessagesVpcEndpoint: pulumi.output(ec2MessagesVpcEndpoint),
+        ssmmessagesVpcEndpoint: pulumi.output(ssmmessagesVpcEndpoint),
         webappLoadBalancer: pulumi.output(webappLoadBalancer),
         webappTargetGroup: pulumi.output(webappTargetGroup),
         webappHttpListener: pulumi.output(webappHttpListener),

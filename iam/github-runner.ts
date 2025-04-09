@@ -93,7 +93,12 @@ export function createGitHubRunnerIAMResources(env: string): GitHubRunnerIAMReso
                         "ecr:GetImageScanFindings",
                         "ecr:PutLifecyclePolicy",
                         "ecr:GetLifecyclePolicy",
-                        "ecr:DeleteLifecyclePolicy"
+                        "ecr:DeleteLifecyclePolicy",
+                        // Permissions for EC2 instance description
+                        "ec2:DescribeInstances",
+                        // Permissions for SSM command execution
+                        "ssm:SendCommand",
+                        "ssm:GetCommandInvocation"
                     ],
                     Resource: "*"
                 }
