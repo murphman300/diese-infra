@@ -6,11 +6,14 @@ import createDatabases from "./databases/index";
 import { createEcsCluster } from "./webapp/index";
 import { createEC2 } from "./ec2/index";
 import { declareS3Buckets } from "./s3/index";
+import { createSecrets } from "./secrets/index";
 let config = new pulumi.Config();
 let env = config.require("env");
 
 // Create IAM resources
 const iamResources = createIAMResources(env);
+
+const secrets = createSecrets(env);
 
 // Create certificates
 const certificates = createCertificates(env);

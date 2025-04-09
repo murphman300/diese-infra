@@ -12,6 +12,8 @@ export interface EcsClusterResources {
     taskDefinition: pulumi.Output<aws.ecs.TaskDefinition>;
     taskExecutionRole: pulumi.Output<aws.iam.Role>;
     taskRole: pulumi.Output<aws.iam.Role>;
+    computeVpc: pulumi.Output<aws.ec2.Vpc>;
+    computeSubnets: pulumi.Output<aws.ec2.Subnet>[];
     logGroup: pulumi.Output<aws.cloudwatch.LogGroup>;
     secret: pulumi.Output<aws.secretsmanager.Secret>;
     secretVersion: pulumi.Output<aws.secretsmanager.SecretVersion>;
@@ -960,6 +962,8 @@ export function createEcsCluster(
         taskDefinition: pulumi.output(taskDefinition),
         taskExecutionRole: pulumi.output(taskExecutionRole),
         taskRole: pulumi.output(taskRole),
+        computeVpc: pulumi.output(computeVpc),
+        computeSubnets: [pulumi.output(computeSubnet1), pulumi.output(computeSubnet2)],
         logGroup: pulumi.output(logGroup),
         secret: pulumi.output(secret),
         secretVersion: pulumi.output(secretVersion),
