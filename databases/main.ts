@@ -98,7 +98,7 @@ export function createDatabase(env: string): DatabaseResources {
         }
     });
 
-    const currentIP = config.require("diese-infra:ssh_allowed_ip_range");
+    const currentIP = config.require("ssh_allowed_ip_range");
 
     // Create security group with stricter rules
     const securityGroup = new aws.ec2.SecurityGroup(`${env}-${dbName}-security-group`, {
